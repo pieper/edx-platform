@@ -10,7 +10,7 @@ from pkg_resources import resource_listdir, resource_string, resource_isdir
 from xmodule.modulestore import inheritance, Location
 from xmodule.modulestore.exceptions import ItemNotFoundError, InsufficientSpecificationError
 
-from xblock.core import XBlock, Scope, String, Integer, Float, ModelType
+from xblock.core import XBlock, Scope, String, Integer, Float, List, ModelType
 
 log = logging.getLogger(__name__)
 
@@ -708,7 +708,7 @@ class XModuleDescriptor(XModuleFields, HTMLSnippet, ResourceTemplates, XBlock):
             # 2. Number editors for integers and floats.
             # 3. A generic string editor for anything else (editing JSON representation of the value).
             editor_type = "Generic"
-            values = [] if field.values is None else copy.deepcopy(field.values)
+            values = copy.deepcopy(field.values)
             if isinstance(values, tuple):
                 values = list(values)
             if isinstance(values, list):
@@ -725,11 +725,13 @@ class XModuleDescriptor(XModuleFields, HTMLSnippet, ResourceTemplates, XBlock):
                 editor_type = "Integer"
             elif isinstance(field, Float):
                 editor_type = "Float"
+            elif isinstance(field, List):
+                editor_type = "List"
             metadata_fields[field.name] = {'field_name': field.name,
                                            'type': editor_type,
                                            'display_name': field.display_name,
                                            'value': field.to_json(value),
-                                           'options': values,
+                                           'options': [] if values is None else values,
                                            'default_value': field.to_json(default_value),
                                            'inheritable': inheritable,
                                            'explicitly_set': explicitly_set,
