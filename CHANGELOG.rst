@@ -11,6 +11,8 @@ preferences. Access to the REST API is restricted by use of the
 X-Edx-Api-Key HTTP header (which must match settings.EDX_API_KEY; if
 the setting is not present, the API is disabled).
 
+Common: Add a manage.py that knows about edx-platform specific settings and projects
+
 Common: Added *experimental* support for jsinput type.
 
 Common: Added setting to specify Celery Broker vhost
