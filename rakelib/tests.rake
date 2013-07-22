@@ -162,3 +162,14 @@ task :coverage => :report_dirs do
         puts "No coverage info found.  Run `rake test` before running `rake coverage`."
     end
 end
+
+desc "Build the html, xml, and diff coverage reports"
+task :quality => :report_dirs do
+    # Generage diff-quality reports for pep8 and pylint violations
+    sh("diff-quality --violations=pep8 --html-report #{REPORT_DIR}/diff_quality_pep8.html")
+    sh("diff-quality --violations=pylint --html-report #{REPORT_DIR}/diff_quality_pylint.html")
+
+    # Print the quality reports to the console
+    sh("diff-quality --violations=pep8")
+    sh("diff-quality --violations=pylint")
+end
