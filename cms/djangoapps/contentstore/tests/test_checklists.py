@@ -1,10 +1,10 @@
 """ Unit tests for checklist methods in views.py. """
 from contentstore.utils import get_modulestore, get_url_reverse
-from contentstore.tests.test_course_settings import CourseTestCase
 from xmodule.modulestore.inheritance import own_metadata
 from xmodule.modulestore.tests.factories import CourseFactory
 from django.core.urlresolvers import reverse
 import json
+from .utils import CourseTestCase
 
 
 class ChecklistTestCase(CourseTestCase):
@@ -46,6 +46,8 @@ class ChecklistTestCase(CourseTestCase):
         # Now delete the checklists from the course and verify they get repopulated (for courses
         # created before checklists were introduced).
         self.course.checklists = None
+        # Save the changed `checklists` to the underlying KeyValueStore before updating the modulestore
+        self.course.save()
         modulestore = get_modulestore(self.course.location)
         modulestore.update_metadata(self.course.location, own_metadata(self.course))
         self.assertEqual(self.get_persisted_checklists(), None)
@@ -117,4 +119,4 @@ class ChecklistTestCase(CourseTestCase):
                                                            'name': self.course.location.name,
                                                            'checklist_index': 100})
         response = self.client.delete(update_url)
-        self.assertContains(response, 'Unsupported request', status_code=400)
+        self.assertEqual(response.status_code, 405)

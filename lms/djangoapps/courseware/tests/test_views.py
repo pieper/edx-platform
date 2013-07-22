@@ -6,6 +6,7 @@ from django.http import Http404
 from django.test.utils import override_settings
 from django.contrib.auth.models import User
 from django.test.client import RequestFactory
+from django.conf import settings
 
 from student.models import CourseEnrollment
 from xmodule.modulestore.django import modulestore
@@ -104,7 +105,7 @@ class ViewsTestCase(TestCase):
 
     def test_no_end_on_about_page(self):
         # Toy course has no course end date or about/end_date blob
-        self.verify_end_date(self.course_id)
+        self.verify_end_date('edX/toy/TT_2012_Fall')
 
     def test_no_end_about_blob(self):
         # test_end has a course end date, no end_date HTML blob
@@ -124,3 +125,26 @@ class ViewsTestCase(TestCase):
             self.assertContains(result, expected_end_text)
         else:
             self.assertNotContains(result, "Classes End")
+
+    def test_chat_settings(self):
+        mock_user = MagicMock()
+        mock_user.username = "johndoe"
+
+        mock_course = MagicMock()
+        mock_course.id = "a/b/c"
+
+        # Stub this out in the case that it's not in the settings
+        domain = "jabber.edx.org"
+        settings.JABBER_DOMAIN = domain
+
+        chat_settings = views.chat_settings(mock_course, mock_user)
+
+        # Test the proper format of all chat settings
+        self.assertEquals(chat_settings['domain'], domain)
+        self.assertEquals(chat_settings['room'], "a-b-c_class")
+        self.assertEquals(chat_settings['username'], "johndoe@%s" % domain)
+
+        # TODO: this needs to be changed once we figure out how to
+        #       generate/store a real password.
+        self.assertEquals(chat_settings['password'], "johndoe@%s" % domain)
+
