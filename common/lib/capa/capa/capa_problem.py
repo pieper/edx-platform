@@ -620,12 +620,16 @@ class LoncapaProblem(object):
         '''
         response_id = 1
         self.responders = {}
-
         for response in tree.xpath('//' + "|//".join(response_tag_dict)):
             response_id_str = self.problem_id + "_" + str(response_id)
             # create and save ID for this response
             response.set('id', response_id_str)
-            response_id += 1  # THIS HAPPENS TOO EARLY!!
+            
+            # This nex line should occure at the end of the loop after the
+            # `for entry in inputfields:` loop.  This is a bug.  It has been
+            # decided that it will be fixed in the general restructuring of
+            # the capa_problem which is slated for down the road.
+            response_id += 1
 
             answer_id = 1
             input_tags = inputtypes.registry.registered_tags()
