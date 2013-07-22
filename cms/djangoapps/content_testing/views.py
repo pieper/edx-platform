@@ -78,7 +78,9 @@ def test_problem(request, action=''):
     elif action.lower() == 'run':
         run(location)
 
-    tests = ContentTest.objects.filter(problem_location=location)
+    tests = ContentTest.objects.filter(problem_location=location).all()
+    for test in tests:
+        test.rematch_if_necessary() 
 
     context = {
         'csrf': csrf(request)['csrf_token'],

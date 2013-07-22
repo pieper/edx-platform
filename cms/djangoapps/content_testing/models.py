@@ -3,7 +3,41 @@ from xmodule.modulestore.django import modulestore
 from xmodule.modulestore import Location
 from contentstore.views.preview import get_preview_module
 from mitxmako.shortcuts import render_to_string
+from lxml import etree
+from copy import deepcopy
 import pickle
+
+
+def hash_xml(tree):
+    """
+    create a has of the etree xml element solely based on the text
+    of the xml.
+    """
+    tree = deepcopy(tree)
+    remove_xml_ids(tree)
+    print etree.tostring(tree)
+    return etree.tostring(tree).__hash__()
+
+
+def remove_xml_ids(tree):
+    """
+    recursivly remove all attribsthat end in `id`
+    """
+    remove_ids(tree.attrib)
+    for child in tree:
+        remove_xml_ids(child)
+
+
+def remove_ids(d):
+    """
+    remove all keys that end in `id`
+    """
+    for k in d:
+        try:
+            if k[-2:] == 'id' or k == 'size':
+                d.pop(k)
+        except:
+            pass
 
 
 class ContentTest(models.Model):
@@ -16,7 +50,7 @@ class ContentTest(models.Model):
     problem_location = models.CharField(max_length=100)
 
     # what the problem should evaluate as (correct or incorrect)
-    # TODO: make this a dict of correctness for each input
+    # TODO: make this a dict of correctness for each response
     should_be = models.CharField(max_length=20)
 
     # the current state of the test
@@ -74,7 +108,7 @@ class ContentTest(models.Model):
                 return html_wrapper
 
             # execute the override
-            lcp.responders[key].render_html = wrapper(lcp.responders[key].render_html)
+            # lcp.responders[key].render_html = wrapper(lcp.responders[key].render_html)
 
         return lcp
 
@@ -125,7 +159,9 @@ class ContentTest(models.Model):
             self._create_children()
 
     def run(self):
-        '''run the test, and see if it passes'''
+        """
+        run the test, and see if it passes
+        """
 
         # process dictionary that is the response from grading
         grade_dict = self._evaluate(self._get_response_dictionary())
@@ -144,7 +180,7 @@ class ContentTest(models.Model):
 
         # retrieve all inputs sorted first by response, and then by order in that response
         sorted_inputs = self.input_set.order_by('response_index', 'input_index').values('answer')
-        answers = [input_model['answer'] for input_model in sorted_inputs]
+        answers = [input_model['answer'] or '-- Not Set --' for input_model in sorted_inputs]
 
         # construct a context for rendering this
         context = {'answers': answers, 'verdict': self.verdict, 'should_be': self.should_be}
@@ -161,6 +197,8 @@ class ContentTest(models.Model):
         html_form = self.capa_problem.get_html()
 
         # remove any forms that the html has
+        # as far as I can tell these are only used for
+        # multiple choice and dropdowns
         import re
         remove_form_open = r"(<form)[^>]*>"
         remove_form_close = r"(/form)"
@@ -171,7 +209,69 @@ class ContentTest(models.Model):
         html_form = html_form + self._should_be_buttons(self.should_be)
         return html_form
 
+    def rematch_if_necessary(self):
+        """
+        rematches itself to its problem if it no longer matches
+        """
+        if not self._still_matches():
+            self._rematch()
+
 #======= Private Methods =======#
+
+    def _still_matches(self):
+        """
+        Returns true if the test still corresponds to the structure of the
+        problem
+        """
+        # if there are no longer the same number, not amatch.
+        if not(self.response_set.count() == len(self.capa_problem.responders)):
+            return False
+
+        # loop through response models, and check that they match
+        all_match = True
+        for resp_model in self.response_set.all():
+            if not resp_model.still_matches():
+                all_match = False
+                break
+
+        return all_match
+
+    def _rematch(self):
+        """
+        corrects structure to reflect the state of the capa problem
+        """
+
+        # create dictionary of response models based on their hashes
+        # NOTE: duplicates will be discarded (essentially made blank)
+        resp_models = self.response_set.all()
+        model_dict = {}
+        for model in resp_models:
+            model_dict[model.xml_hash] = model
+
+        # reassign models to responders based on hashes
+        used_models = []
+        for responder in self.capa_problem.responders.values():
+            responder_hash = hash_xml(responder.xml)
+
+            # try to get the already existant model
+            try:
+                resp_model = model_dict.pop(responder_hash)
+
+                # re-sync ids and count this model as used
+                resp_model.rematch(responder)
+                used_models.append(resp_model)
+
+            # make a new one if necessary
+            except KeyError:
+                self._create_child(responder)
+
+        # delete unnused models
+        for model in resp_models:
+            if model not in used_models:
+                model.delete()
+
+        # remake the dictionary
+        self._remake_dict_from_children()
 
     def _should_be_buttons(self, resp_should_be):
         """
@@ -254,41 +354,54 @@ class ContentTest(models.Model):
         # unpickle if necessary
         if isinstance(resp_dict, basestring):
             resp_dict = pickle.loads(resp_dict)
-        
+
         return resp_dict
 
-    def _get_dict_from_children(self):
+    def _remake_dict_from_children(self):
         """
         build the response dictionary by getting the values from the children
         """
 
+        # refetch the answers from all the children
         resp_dict = {}
         for resp_model in self.response_set.all():
             for input_model in resp_model.input_set.all():
                 resp_dict[input_model.string_id] = input_model.answer
 
-        return resp_dict
+        # update the dictionary
+        self.response_dict = resp_dict
+        self.save()
 
     def _create_children(self):
-        '''create child responses and input entries when created'''
+        """
+        create child responses and input entries
+        """
 
         # create a preview capa problem
         problem_capa = self.capa_problem
 
         # go through responder objects
         for responder_xml, responder in problem_capa.responders.iteritems():
+            self._create_child(responder, self._get_response_dictionary())
 
-            # put the response object in the database
-            response_model = Response.objects.create(
-                content_test=self,
-                xml=responder_xml,
-                string_id=responder.id)
+    def _create_child(self, responder, response_dict={}):
+        """
+        from a responder object, create the associated child response model
+        """
 
-            # tell it to put its children in the database
-            response_model._create_children(responder, pickle.loads(self.response_dict))
+        # put the response object in the database
+        response_model = Response.objects.create(
+            content_test=self,
+            xml_hash=hash_xml(responder.xml),
+            string_id=responder.id)
+
+        # tell it to put its children in the database
+        response_model._create_children(responder, response_dict)
 
     def _update_dictionary(self, new_dict):
-        '''update the input models with the new responses'''
+        """
+        update the input models with the new responses
+        """
 
         for resp_model in self.response_set.all():
             for input_model in resp_model.input_set.all():
@@ -297,16 +410,47 @@ class ContentTest(models.Model):
 
 
 class Response(models.Model):
-    '''Object that corresponds to the <_____response> fields'''
-
+    """
+    Object that corresponds to the <_____response> fields
+    """
     # the tests in which this response resides
     content_test = models.ForeignKey(ContentTest)
 
     # the string identifier
-    string_id = models.CharField(max_length=100, editable=False)
+    string_id = models.CharField(max_length=100)
 
     # the inner xml of this response (used to extract the object quickly (ideally))
-    xml = models.TextField(editable=False)
+    xml_hash = models.BigIntegerField()
+
+    def rematch(self, responder):
+        """
+        reassociates the ids with this new responder object.
+        It is assumed that the hashes match, and all that need
+        changing are the ids.
+        """
+
+        # if the ids match, we are done
+        if self.string_id == responder.id:
+            return
+
+        # reassociate the response id
+        self.string_id = responder.id
+
+        # rematch all the childrens ids
+        input_models = self.input_set.order_by('input_index').all()
+        for input_field, input_model in zip(responder.inputfields, input_models):
+
+            # something has gone terribly wrong if they dont actually match up
+            # assert input_field.attrib['answer_id'] == input_model.input_index
+
+            # reassign the other ids
+            input_model.response_index = input_field.attrib['response_id']
+            input_model.string_id = input_field.attrib['id']
+
+            # save the result
+            input_model.save()
+
+        self.save()
 
     def _create_children(self, resp_obj=None, response_dict={}):
         '''generate the database entries for the inputs to this response'''
@@ -344,6 +488,18 @@ class Response(models.Model):
             raise LookupError
 
         return self_capa
+
+    def still_matches(self):
+        """
+        check that the stored has is the same as the calculated on
+        """
+
+        try:
+            capa_xml = self.capa_response.xml
+            capa_hash = hash_xml(capa_xml)
+            return capa_hash == self.xml_hash
+        except LookupError:
+            return False
 
 
 class Input(models.Model):

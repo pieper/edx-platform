@@ -3,13 +3,13 @@ Unit tests on the models that make up automated content testing
 """
 
 from textwrap import dedent
-from django.test import TestCase
 from xmodule.modulestore import Location
 from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.django import modulestore
-from content_testing.models import ContentTest, Response, Input
+from content_testing.models import ContentTest, Response, Input, hash_xml
 from capa.tests.response_xml_factory import CustomResponseXMLFactory
+from lxml import etree
 import pickle
 
 
@@ -66,15 +66,18 @@ class ContentTestTest(ModuleStoreTestCase):
     VERDICT_ERROR = "ERROR"
     VERDICT_NONE = "Not Run"
 
+    TEMPLATE = "i4x://edx/templates/problem/Custom_Python-Evaluated_Input"
+
     def setUp(self):
+        """
+        create all the tools to test content_tests
+        """
+
         #course in which to put the problem
         self.course = CourseFactory.create()
         assert self.course
 
-        #make the problem
-        custom_template = "i4x://edx/templates/problem/Custom_Python-Evaluated_Input"
-
-        #change the script if 1
+        # make the problem
         problem_xml = CustomResponseXMLFactory().build_xml(
             script=self.SCRIPT,
             cfn='test_prime',
@@ -83,20 +86,19 @@ class ContentTestTest(ModuleStoreTestCase):
         self.problem = ItemFactory.create(
             parent_location=self.course.location,
             data=problem_xml,
-            template=custom_template,
-            num_inputs=self.NUM_INPUTS)
+            template=self.TEMPLATE)
 
-        #sigh
-        input_id_base = self.problem.id.replace('://', '-').replace('/', '-')
+        # sigh
+        self.input_id_base = self.problem.id.replace('://', '-').replace('/', '-')
 
         # saved responses for making tests
         self.response_dict_correct = {
-            input_id_base + '_2_1': '5',
-            input_id_base + '_2_2': '174440041'
+            self.input_id_base + '_2_1': '5',
+            self.input_id_base + '_2_2': '174440041'
         }
         self.response_dict_incorrect = {
-            input_id_base + '_2_1': '4',
-            input_id_base + '_2_2': '541098'
+            self.input_id_base + '_2_1': '4',
+            self.input_id_base + '_2_2': '541098'
         }
 
         self.response_dict_error = {
@@ -191,15 +193,17 @@ class WhiteBoxTests(ContentTestTest):
         # update the dictionary with wrong answers
         test_model._update_dictionary(self.response_dict_incorrect)
 
-        # update the attribute too
-        test_model.response_dict = self.response_dict_incorrect
+        #remake the attribute
+        test_model._remake_dict_from_children()
 
         # make sure they match
-        self.assertEqual(test_model._get_response_dictionary(), test_model._get_dict_from_children())
+        self.assertEqual(self.response_dict_incorrect, test_model._get_response_dictionary())
 
 
 class BlackBoxTests(ContentTestTest):
-    '''test overall behavior of the ContentTest model'''
+    """
+    test overall behavior of the ContentTest model
+    """
 
     def test_pass_correct(self):
         '''test that it passes with correct answers when it should'''
@@ -300,6 +304,171 @@ class BlackBoxTests(ContentTestTest):
         new_model = ContentTest.objects.get(pk=test_model.pk)
 
         self.assertEqual(pickle.loads(new_model.response_dict), self.response_dict_correct)
+
+
+class RematchingTests(ContentTestTest):
+    """
+    tests the ability to rematch itself to an edited problem
+    """
+
+    def setUp(self):
+        """
+        create new sructure to test smart restructuring capabilities
+        """
+
+        super(RematchingTests, self).setUp()
+
+        self.new_xml = CustomResponseXMLFactory().build_xml(
+            script=self.SCRIPT,
+            cfn='test_prime',
+            num_inputs=self.NUM_INPUTS+1)
+
+        self.new_problem = ItemFactory.create(
+            parent_location=self.course.location,
+            data=self.new_xml,
+            template=self.TEMPLATE)
+
+    def test_hash(self):
+        """
+        test that the hash function ignors the right things
+        """
+
+        xml1 = etree.XML("<root root_id=\"3\"><child id=\"234\"/></root>")
+        xml2 = etree.XML("<root><child/></root>")
+
+        self.assertEqual(hash_xml(xml1), hash_xml(xml2))
+
+    def test_matches(self):
+        """
+        test that the model knows when it still matches the problem
+        """
+
+        assert self.pass_correct._still_matches()
+
+    def test_not_matches_lookup_error(self):
+        """
+        test that the model knows when it no longer matches when the
+        id's no longer match
+        """
+
+        # change the capa problem the test points to so that
+        # the problem structure is different
+        test_model = self.pass_correct
+        test_model.problem_location = self.new_problem.location
+        test_model.save()
+
+        assert not(test_model._still_matches())
+
+    def test_not_matches_new_xml(self):
+        """
+        test that when the xml of the capa problem gets updated
+        the model knows
+        """
+
+        # change the problem by adding another textline
+        modulestore().update_item(self.problem.location, self.new_xml)
+
+        test_model = self.pass_correct
+        assert not(test_model._still_matches())
+
+    def test_new_dict_blank(self):
+        """
+        test rebuilding the dictionary with a different response
+        """
+
+        # the dictioanry, after fixing, should have blank answers
+        new_dict = {
+            self.input_id_base + '_2_1': '',
+            self.input_id_base + '_2_2': '',
+            self.input_id_base + '_2_3': ''
+        }
+
+        # change the problem by adding another textline
+        modulestore().update_item(self.problem.location, self.new_xml)
+
+        test_model = self.pass_correct
+        test_model._rematch()
+        self.assertEqual(new_dict, test_model._get_response_dictionary())
+
+    def test_new_dict_bigger(self):
+        """
+        test adding a new response at the end and then rebuilding
+        """
+        self.maxDiff = None
+        # print self.new_xml
+        # print self.pass_correct.capa_problem.problem_text
+
+        # add a response at the end
+        new_response_xml = etree.XML("<customresponse cfn=\"test_prime\"><textline/><textline/></customresponse>")
+        new_xml = self.pass_correct.capa_problem.tree
+        new_xml.append(new_response_xml)
+        new_xml_string = etree.tostring(new_xml)
+        # the response dict should look like
+        two_responses_dict = {
+            self.input_id_base + '_3_1': '',
+            self.input_id_base + '_3_2': ''
+        }
+        two_responses_dict.update(self.response_dict_correct)
+
+        # change the problem by adding another response at end
+        modulestore().update_item(self.problem.location, new_xml_string)
+        
+        test_model = self.pass_correct
+        test_model._rematch()
+        self.assertEqual(two_responses_dict, test_model._get_response_dictionary())
+
+    def test_new_dict_bigger_front(self):
+        """
+        adding response at beginning of problem
+        """
+        self.maxDiff = None
+        new_xml_string= """<problem>
+
+<script type="loncapa/python">
+
+def is_prime (n):
+  primality = True
+  for i in range(2,int(math.sqrt(n))+1):
+    if n%i == 0:
+        primality = False
+        break
+  return primality
+
+def test_prime(expect,ans):
+  a=int(ans)
+  return is_prime(a)
+
+</script>
+
+<p>Enter a prime number</p>
+<customresponse cfn="test_prime">
+  <textline/>
+  <textline/>
+  <textline/>
+</customresponse>
+<customresponse cfn="test_prime">
+  <textline/>
+  <textline/>
+</customresponse>
+</problem>"""
+        
+        # the response dict should look like
+        two_responses_dict = {
+            self.input_id_base + '_3_1': '5',
+            self.input_id_base + '_3_2': '174440041',
+            self.input_id_base + '_2_1': '',
+            self.input_id_base + '_2_2': '',
+            self.input_id_base + '_2_3': ''
+        }
+
+        # change the problem by adding another response at end
+        modulestore().update_item(self.problem.location, new_xml_string)
+        
+        test_model = self.pass_correct
+        # import nose; nose.tools.set_trace()
+        test_model._rematch()
+        self.assertEqual(two_responses_dict, test_model._get_response_dictionary())
+
 
     # def test_get_html_summary(self):
     #     """

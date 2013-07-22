@@ -9,8 +9,8 @@
 <div class="inner-wrapper">
 <div class="main-column">
 <h1> Testing Summary </h1><br>
-% if tests.count() > 0:
-  % for test in tests.all():
+% if len(tests) > 0:
+  % for test in tests:
     ${test.get_html_summary()}
     <form method="post" action="/test_problem/delete/">
         <input type="hidden" name="id_to_delete" value=${test.pk}>
