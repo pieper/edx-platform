@@ -1,7 +1,7 @@
 import json
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django.utils.translation import ugettext as _
@@ -11,9 +11,11 @@ from mitxmako.shortcuts import render_to_response
 from xmodule.modulestore import Location
 from xmodule.modulestore.django import modulestore
 from contentstore.utils import get_url_reverse, get_lms_link_for_item
-from util.json_request import expect_json, JsonResponse
-from auth.authz import STAFF_ROLE_NAME, INSTRUCTOR_ROLE_NAME, get_users_in_course_group_by_role
-from auth.authz import add_user_to_course_group, remove_user_from_course_group
+from util.json_request import JsonResponse
+from auth.authz import (
+    STAFF_ROLE_NAME, INSTRUCTOR_ROLE_NAME, get_users_in_course_group_by_role,
+    add_user_to_course_group, remove_user_from_course_group,
+    get_course_groupname_for_role)
 
 from .access import has_access
 
@@ -108,9 +110,9 @@ def course_team_user(request, org, course, name, email):
 
     # all other operations require the requesting user to specify a role --
     # or if no role is specified, default to "staff"
-    if "role" in request.POST:
-        role = request.POST["role"]
-    elif request.body:
+    if not request.body:
+        role = STAFF_ROLE_NAME
+    else:
         try:
             payload = json.loads(request.body)
         except:
@@ -119,8 +121,8 @@ def course_team_user(request, org, course, name, email):
             role = payload["role"]
         except KeyError:
             return JsonResponse({"error": "`role` is required"}, 400)
-    else:
-        role = STAFF_ROLE_NAME
+    groupname = get_course_groupname_for_role(location, role)
+    group = Group.objects.get_or_create(name=groupname)
 
     if request.method in ("POST", "PUT"):
         add_user_to_course_group(request.user, user, location, role)
