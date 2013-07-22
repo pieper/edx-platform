@@ -434,6 +434,12 @@ if settings.MITX_FEATURES.get('ENABLE_HINTER_INSTRUCTOR_VIEW'):
             'instructor.hint_manager.hint_manager', name="hint_manager"),
     )
 
+#CME Registration
+if settings.MITX_FEATURES.get('USE_CME_REGISTRATION'):
+    urlpatterns += (
+        url(r'^register/', include('cme_registration.urls')),
+    )
+
 urlpatterns = patterns(*urlpatterns)
 
 if settings.DEBUG:
