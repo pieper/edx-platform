@@ -339,23 +339,29 @@ USE_TZ = True
 
 # Site info
 SITE_ID = 1
-SITE_NAME = "edx.org"
+SITE_NAME = "medx.org"
 HTTPS = 'on'
 ROOT_URLCONF = 'lms.urls'
 IGNORABLE_404_ENDS = ('favicon.ico')
 
 # Email
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'registration@edx.org'
-DEFAULT_FEEDBACK_EMAIL = 'feedback@edx.org'
-SERVER_EMAIL = 'devops@edx.org'
-TECH_SUPPORT_EMAIL = 'technical@edx.org'
-CONTACT_EMAIL = 'info@edx.org'
-BUGS_EMAIL = 'bugs@edx.org'
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+DEFAULT_FROM_EMAIL = 'registration@ibility.net'
+DEFAULT_FEEDBACK_EMAIL = 'feedback@ibility.net'
+SERVER_EMAIL = 'devops@ibility.net'
+TECH_SUPPORT_EMAIL = 'technical@ibility.net'
+CONTACT_EMAIL = 'info@ibility.net'
+BUGS_EMAIL = 'bugs@ibility.net'
 ADMINS = (
-    ('edX Admins', 'admin@edx.org'),
+    ('MedX Admins', 'admin@ibility.net'),
 )
-MANAGERS = ADMINS
+
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_HOST_USER = 'medxpieper@gmail.com'
+EMAIL_HOST_PASSWORD = REMOVED_FOR_SECURITY
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
 
 # Static content
 STATIC_URL = '/static/'
